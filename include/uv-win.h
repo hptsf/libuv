@@ -368,11 +368,10 @@ RB_HEAD(uv_timer_tree_s, uv_timer_s);
   } u;                                                                        \
   struct uv_req_s* next_req;
 
-#define UV_WRITE_PRIVATE_FIELDS                                           \
-  int coalesced; /* This ABI change will be un-done in a later commit. */ \
-  int ipc_header;                                                         \
-  uv_buf_t write_buffer;                                                  \
-  HANDLE event_handle;                                                    \
+#define UV_WRITE_PRIVATE_FIELDS \
+  int coalesced;                \
+  uv_buf_t write_buffer;        \
+  HANDLE event_handle;          \
   HANDLE wait_handle;
 
 #define UV_CONNECT_PRIVATE_FIELDS                                             \
@@ -460,7 +459,7 @@ RB_HEAD(uv_timer_tree_s, uv_timer_s);
 
 #define uv_pipe_connection_fields                                             \
   uv_timer_t* eof_timer;                                                      \
-  uv_write_t ipc_header_write_req;                                            \
+  uv_write_t dummy; /* TODO: retained for ABI compat; remove this in v2.x. */ \
   int ipc_pid;                                                                \
   uint64_t remaining_ipc_rawdata_bytes;                                       \
   struct {                                                                    \

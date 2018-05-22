@@ -1194,8 +1194,43 @@ void uv_process_tcp_connect_req(uv_loop_t* loop, uv_tcp_t* handle,
 }
 
 
-int uv_tcp_import(uv_tcp_t* tcp, uv__ipc_socket_info_ex* socket_info_ex,
-    int tcp_connection) {
+int uv_tcp_export(uv_tcp_t* handle,
+                  int pid,
+                  uv__ipc_socket_info_ex* socket_info_ex) {
+  if (!(handle->flags & UV_HANDLE_CONNECTION)) {
+    /*
+    * We're about to share the socket with another process.  Because
+    * this is a listening socket, we assume that the other process will
+    * be accepting connections on it.  So, before sharing the socket
+    * with another process, we call listen here in the parent process.
+    */
+    if (!(handle->flags & UV_HANDLE_LISTENING)) {
+      if (!(handle->flags & UV_HANDLE_BOUND)) {
+        return ERROR_NOT_SUPPORTED;
+      }
+      if (handle->delayed_error == 0 &&
+          listen(handle->socket, SOMAXCONN) == SOCKET_ERROR) {
+        handle->delayed_error = WSAGetLastError();
+      }
+    }
+  }
+
+  if (WSADuplicateSocketW(handle->socket, pid, &socket_info_ex->socket_info)) {
+    return WSAGetLastError();
+  }
+  socket_info_ex->delayed_error = handle->delayed_error;
+  socket_info_ex->flags = handle->flags & UV_HANDLE_CONNECTION;
+
+  /* Mark the local copy of the handle as 'shared' so we behave in a way that's
+   * friendly to the process(es) that we share the socket with.
+   */
+  handle->flags |= UV_HANDLE_SHARED_TCP_SOCKET;
+
+  return 0;
+}
+
+
+int uv_tcp_import(uv_tcp_t* tcp, uv__ipc_socket_info_ex* socket_info_ex) {
   int err;
   SOCKET socket = WSASocketW(FROM_PROTOCOL_INFO,
                              FROM_PROTOCOL_INFO,
@@ -1218,15 +1253,13 @@ int uv_tcp_import(uv_tcp_t* tcp, uv__ipc_socket_info_ex* socket_info_ex,
     return err;
   }
 
-  if (tcp_connection) {
+  tcp->delayed_error = socket_info_ex->delayed_error;
+  tcp->flags |= UV_HANDLE_BOUND | UV_HANDLE_SHARED_TCP_SOCKET;
+
+  if (socket_info_ex->flags & UV_HANDLE_CONNECTION) {
     uv_connection_init((uv_stream_t*)tcp);
     tcp->flags |= UV_HANDLE_READABLE | UV_HANDLE_WRITABLE;
   }
-
-  tcp->flags |= UV_HANDLE_BOUND;
-  tcp->flags |= UV_HANDLE_SHARED_TCP_SOCKET;
-
-  tcp->delayed_error = socket_info_ex->delayed_error;
 
   tcp->loop->active_tcp_streams++;
   return 0;
@@ -1268,39 +1301,6 @@ int uv_tcp_keepalive(uv_tcp_t* handle, int enable, unsigned int delay) {
   }
 
   /* TODO: Store delay if handle->socket isn't created yet. */
-
-  return 0;
-}
-
-
-int uv_tcp_duplicate_socket(uv_tcp_t* handle, int pid,
-    LPWSAPROTOCOL_INFOW protocol_info) {
-  if (!(handle->flags & UV_HANDLE_CONNECTION)) {
-    /*
-     * We're about to share the socket with another process.  Because
-     * this is a listening socket, we assume that the other process will
-     * be accepting connections on it.  So, before sharing the socket
-     * with another process, we call listen here in the parent process.
-     */
-
-    if (!(handle->flags & UV_HANDLE_LISTENING)) {
-      if (!(handle->flags & UV_HANDLE_BOUND)) {
-        return ERROR_INVALID_PARAMETER;
-      }
-
-      if (!(handle->delayed_error)) {
-        if (listen(handle->socket, SOMAXCONN) == SOCKET_ERROR) {
-          handle->delayed_error = WSAGetLastError();
-        }
-      }
-    }
-  }
-
-  if (WSADuplicateSocketW(handle->socket, pid, protocol_info)) {
-    return WSAGetLastError();
-  }
-
-  handle->flags |= UV_HANDLE_SHARED_TCP_SOCKET;
 
   return 0;
 }
